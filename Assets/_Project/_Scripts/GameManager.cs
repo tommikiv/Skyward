@@ -1,6 +1,7 @@
+using FishNet;
 using FishNet.Connection;
 using FishNet.Managing;
-using FishNet.Managing.Server;
+using FishNet.Object;
 using FishNet.Transporting;
 using System.Linq;
 using UnityEngine;
@@ -64,11 +65,41 @@ public class GameManager : MonoBehaviour
         {
             conn.OnLoadedStartScenes += (conn, asServer) =>
             {
+                if (!asServer) return;
+
+                // TODO: World selection UI instead of just putting everyone in a new world
+                int worldId = WorldManager.Instance.GetActiveWorldCount() + 1;
+
+                PlayerWorldTracker.Instance.SetPlayerWorld(conn, worldId);
+
                 GameObject player = Instantiate(playerPrefab, Vector3.zero, Quaternion.identity);
+                player.GetComponent<WorldObject>().WorldId = worldId;
                 _networkManager.ServerManager.Spawn(player, conn);
-                Debug.Log($"Client connected: {conn.ClientId}, spawned player: {player.name}");
+
+                WorldManager.Instance.GetOrCreateWorld(worldId);
+
+                // Rebuild observers for all clients
+                foreach (NetworkConnection existingConn in _networkManager.ServerManager.Clients.Values)
+                    InstanceFinder.ServerManager.Objects.RebuildObservers(existingConn);
             };
         }
+    }
+
+    public void MovePlayerToWorld(NetworkConnection conn, int worldId)
+    {
+        // 1. Track the player's world first
+        PlayerWorldTracker.Instance.SetPlayerWorld(conn, worldId);
+
+        // 2. Set the player's WorldObject id
+        NetworkObject playerNob = conn.FirstObject;
+        if (playerNob == null) { Debug.LogError("No player object!"); return; }
+        playerNob.GetComponent<WorldObject>().WorldId = worldId;
+
+        // 3. Now get or create the world (spawns it if needed)
+        World world = WorldManager.Instance.GetOrCreateWorld(worldId);
+
+        // 4. Rebuild observers now that everything is set
+        InstanceFinder.ServerManager.Objects.RebuildObservers(conn);
     }
 
     private void OnDestroy()

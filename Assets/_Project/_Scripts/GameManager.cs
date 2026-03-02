@@ -3,8 +3,10 @@ using FishNet.Connection;
 using FishNet.Managing;
 using FishNet.Object;
 using FishNet.Transporting;
+using NUnit.Framework;
 using System.Linq;
 using UnityEngine;
+using System.Collections.Generic;
 
 public class GameManager : MonoBehaviour
 {
@@ -87,19 +89,34 @@ public class GameManager : MonoBehaviour
 
     public void MovePlayerToWorld(NetworkConnection conn, int worldId)
     {
-        // 1. Track the player's world first
+        int previousWorldId = -1;
+        PlayerWorldTracker.Instance.TryGetWorld(conn, out previousWorldId);
+
         PlayerWorldTracker.Instance.SetPlayerWorld(conn, worldId);
 
-        // 2. Set the player's WorldObject id
         NetworkObject playerNob = conn.FirstObject;
-        if (playerNob == null) { Debug.LogError("No player object!"); return; }
+        if (playerNob == null) return;
         playerNob.GetComponent<WorldObject>().WorldId = worldId;
 
-        // 3. Now get or create the world (spawns it if needed)
         World world = WorldManager.Instance.GetOrCreateWorld(worldId);
 
-        // 4. Rebuild observers now that everything is set
+        // Only rebuild for connections in the affected worlds
+        foreach (NetworkConnection existingConn in _networkManager.ServerManager.Clients.Values)
+        {
+            if (!PlayerWorldTracker.Instance.TryGetWorld(existingConn, out int connWorldId))
+                continue;
+
+            if (connWorldId == worldId || connWorldId == previousWorldId)
+                InstanceFinder.ServerManager.Objects.RebuildObservers(existingConn);
+        }
+
+        // Always rebuild for the moving player themselves
         InstanceFinder.ServerManager.Objects.RebuildObservers(conn);
+
+        world.SyncModificationsToClient(conn);
+
+        if (previousWorldId >= 0)
+            WorldManager.Instance.TryDespawnWorld(previousWorldId);
     }
 
     private void OnDestroy()
@@ -109,6 +126,7 @@ public class GameManager : MonoBehaviour
             _networkManager.ServerManager.OnRemoteConnectionState -= OnClientConnected;
         }
     }
+
 }
 
 public enum NetworkRole

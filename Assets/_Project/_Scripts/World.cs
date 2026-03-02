@@ -7,10 +7,30 @@ using UnityEngine.Tilemaps;
 public class World : NetworkBehaviour
 {
     public int WorldId { get; private set; }
-
     [SerializeField] private Tilemap tilemap;
     [SerializeField] private TileBase dirtTile;
     [SerializeField] private TileBase stoneTile;
+    [SerializeField] private Vector2 tilemapOffset = new Vector2(-50, -50);
+
+    private Dictionary<Vector3Int, string> _tileModifications = new();
+    private Dictionary<string, TileBase> _tileRegistry;
+
+    private void Awake()
+    {
+        tilemap.transform.position = tilemapOffset;
+        // TODO: Replace with ScriptableObject registry
+        _tileRegistry = new Dictionary<string, TileBase>
+        {
+            { "dirt", dirtTile },
+            { "stone", stoneTile },
+        };
+    }
+
+    private TileBase GetTile(string tileId)
+    {
+        _tileRegistry.TryGetValue(tileId, out TileBase tile);
+        return tile;
+    }
 
     public void Initialize(int worldId)
     {
@@ -21,24 +41,17 @@ public class World : NetworkBehaviour
 
     private void GenerateTerrain()
     {
-        // Generate using WorldId as seed so it's consistent
         Random.InitState(WorldId);
-
         int width = 100;
         int height = 100;
-
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
             {
                 if (y < 50 && y > 43)
-                {
                     tilemap.SetTile(new Vector3Int(x, y, 0), dirtTile);
-                } else if (y <= 43)
-                {
+                else if (y <= 43)
                     tilemap.SetTile(new Vector3Int(x, y, 0), stoneTile);
-                }
-                
             }
         }
     }
@@ -46,52 +59,62 @@ public class World : NetworkBehaviour
     public override void OnStartClient()
     {
         base.OnStartClient();
-        // Sync initial tilemap state to late-joining clients
-        if (IsServerInitialized) return; // server already has it
+        if (IsServerInitialized) return;
         GenerateTerrain();
+
+        // Replay any modifications that happened before this client joined
+        foreach (var kvp in _tileModifications)
+        {
+            TileBase tile = kvp.Value != null ? GetTile(kvp.Value) : null;
+            tilemap.SetTile(kvp.Key, tile);
+        }
     }
 
-    // Client requests to place a tile
-    /*
-    [ServerRpc(RequireOwnership = false)]
-    public void PlaceTileServer(Vector3Int position, string tileId, NetworkConnection sender = null)
+    public void BreakTile(Vector3Int position)
     {
-        // Validate: is the sender actually in this world?
-        if (!PlayerWorldTracker.Instance.TryGetWorld(sender, out int worldId) || worldId != WorldId)
-            return;
-
-        // Validate: is the position within range of the player?
-        // (add your own range check here)
-
-        TileBase tile = TileRegistry.GetTile(tileId);
-        if (tile == null) return;
-
-        tilemap.SetTile(position, tile);
-        SyncTileObservers(position, tileId);
-    }
-
-    // Client requests to break a tile
-    [ServerRpc(RequireOwnership = false)]
-    public void BreakTileServer(Vector3Int position, NetworkConnection sender = null)
-    {
-        if (!PlayerWorldTracker.Instance.TryGetWorld(sender, out int worldId) || worldId != WorldId)
-            return;
-
-        // Validate: is there actually a tile here?
+        // Account for offset of tilemap in world space
+        position -= Vector3Int.FloorToInt((Vector3)tilemapOffset);
         if (tilemap.GetTile(position) == null) return;
-
         tilemap.SetTile(position, null);
-        SyncTileObservers(position, null);
+        _tileModifications[position] = null;
+        SyncBreakTile(position);
     }
-    
-    // Only sync to observers of this NetworkObject (i.e. players in this world)
-    [ObserversRpc]
-    private void SyncTileObservers(Vector3Int position, string tileId)
-    {
-        if (IsServer) return; // server already applied it
 
-        TileBase tile = tileId != null ? TileRegistry.GetTile(tileId) : null;
+    public void PlaceTile(Vector3Int position, string tileId)
+    {
+        position -= Vector3Int.FloorToInt((Vector3)tilemapOffset);
+        TileBase tile = GetTile(tileId);
+        if (tile == null) return;
+        if (tilemap.GetTile(position) != null) return;
+        tilemap.SetTile(position, tile);
+        _tileModifications[position] = tileId;
+        SyncPlaceTile(position, tileId);
+    }
+
+    [ObserversRpc]
+    private void SyncBreakTile(Vector3Int position)
+    {
+        if (IsServerInitialized) return;
+        tilemap.SetTile(position, null);
+    }
+
+    [ObserversRpc]
+    private void SyncPlaceTile(Vector3Int position, string tileId)
+    {
+        if (IsServerInitialized) return;
+        tilemap.SetTile(position, GetTile(tileId));
+    }
+
+    public void SyncModificationsToClient(NetworkConnection conn)
+    {
+        foreach (var kvp in _tileModifications)
+            TargetRpcSyncTile(conn, kvp.Key, kvp.Value);
+    }
+
+    [TargetRpc]
+    private void TargetRpcSyncTile(NetworkConnection conn, Vector3Int position, string tileId)
+    {
+        TileBase tile = tileId != null ? GetTile(tileId) : null;
         tilemap.SetTile(position, tile);
     }
-    */
 }

@@ -42,4 +42,10 @@ public class WorldManager : MonoBehaviour
     }
 
     public int GetActiveWorldCount() => _activeWorlds.Count;
+
+    public World GetWorld(int worldId)
+    {
+        _activeWorlds.TryGetValue(worldId, out World world);
+        return world;
+    }
 }

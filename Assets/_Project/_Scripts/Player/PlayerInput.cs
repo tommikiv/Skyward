@@ -29,6 +29,20 @@ public class PlayerInput : MonoBehaviour
     {
         return inputActions.Player.Move.ReadValue<Vector2>();
     }
+    
+    public bool IsPrimaryPressed()
+    {
+        return inputActions.Player.Primary.IsPressed();
+    }
+
+    public bool IsSecondaryPressed() {
+        return inputActions.Player.Secondary.IsPressed();
+    }
+
+    public Vector2 GetMousePosition()
+    {
+        return inputActions.Player.MousePosition.ReadValue<Vector2>();
+    }
 
     private void OnDisable()
     {
